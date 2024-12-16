@@ -25,11 +25,6 @@
 -- local audioFile = "/Users/unclecode/.audio/output.m4a"
 local ffmpegPath = "/opt/homebrew/bin/ffmpeg"
 
--- -- Extract keys from .api_key
--- local groqKey = hs.execute("cat /Users/unclecode/.api_key | grep GROQ_API_KEY | cut -d'=' -f2"):gsub("%s+", "")
--- local openaiKey = hs.execute("cat /Users/unclecode/.api_key | grep OPENAI_API_KEY | cut -d'=' -f2"):gsub("%s+", "")
--- local apiKey = groqKey -- Default to GROQ for transcription, OpenAI for grammar & assistant
-
 -- New paths (using script directory as base)
 local scriptDir = debug.getinfo(1, "S").source:match("@?(.*/)")
 local audioFile = scriptDir .. "audio/output.m4a"
@@ -48,13 +43,28 @@ local alertStyle = {
 }
 
 local scriptDir = debug.getinfo(1, "S").source:match("@?(.*/)")
--- local promptFile = scriptDir .. "grammar_prompt.md"
--- local assistantPromptFile = scriptDir .. "assistant_prompt.md"
--- local conversationHistoryFile = scriptDir .. "conversation_history.json"
-
 local promptFile = scriptDir .. "grammar_prompt.md"
 local assistantPromptFile = scriptDir .. "assistant_prompt.md"
 local conversationHistoryFile = scriptDir .. "conversation_history.json"
+
+-- Read config file for audio device
+local configFile = scriptDir .. "config"
+local audioDevice = ":0" -- default fallback
+do
+    local f = io.open(configFile, "r")
+    if f then
+        for line in f:lines() do
+            if line:match("^AUDIO_DEVICE=") then
+                audioDevice = ":" .. line:gsub("AUDIO_DEVICE=", "")
+                break
+            end
+        end
+        f:close()
+    end
+end
+
+-- Print device
+print("Using audio device: " .. audioDevice)
 
 -- Read grammar prompt
 local systemPrompt = ""
@@ -297,9 +307,9 @@ local function startRecording()
         os.remove(audioFile)
     end
     recordingTask = hs.task.new(ffmpegPath, function() end,
-        {"-f", "avfoundation", "-i", ":0", "-c:a", "aac", audioFile})
+        {"-f", "avfoundation", "-i", audioDevice, "-c:a", "aac", audioFile})
     if recordingTask:start() then
-        hs.timer.doAfter(0.2, function()
+        hs.timer.doAfter(0.5, function()
             hs.sound.getByName("Blow"):play()
             toggleMouseIndicator("recording")
         end)
@@ -321,7 +331,7 @@ local function callGroqTranscribe(filePath)
         '-F temperature=0 ' ..
         '-F response_format=json ' ..
         '-F language=en',
-        apiKey, filePath
+        groqKey, filePath
     )
     local response = hs.execute(curlCmd)
     local json = hs.json.decode(response)
