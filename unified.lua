@@ -253,18 +253,29 @@ local function callOpenAI(sysPrompt, userText)
     return json.choices[1].message.content, nil
 end
 
-local function callAssistantAPI(userInput)
+local function callAssistantAPI(userInput, context)
     local messages = {{ role = "system", content = assistantPrompt }}
     for _, msg in ipairs(conversationHistory) do
         table.insert(messages, msg)
     end
-    table.insert(messages, { role = "user", content = userInput })
+    
+    -- If context is provided, wrap it in selected_text tags
+    local finalUserInput = userInput
+    if context then
+        finalUserInput = string.format("%s\n\n<selected_text>This is the text I have selected: %s</selected_text>", 
+            context, userInput)
+    end
+    
+    table.insert(messages, { role = "user", content = finalUserInput })
 
     local jsonBody = hs.json.encode({
         model = "gpt-4o-mini",
         messages = messages,
         temperature = 0.7
     })
+
+    print(finalUserInput)
+    
     local curlCmd = string.format(
         '/usr/bin/curl "https://api.openai.com/v1/chat/completions" ' ..
         '-H "Authorization: Bearer %s" ' ..
@@ -432,29 +443,84 @@ end
 -- Assistant Interaction
 -----------------------------------------
 local function assistantInteract()
-    if recordingTask and recordingTask:isRunning() then
-        -- Stop recording and process transcription, then call assistant
-        stopAndTranscribe(function(transcribedText)
-            addToHistory("user", transcribedText)
-            local result, err = callAssistantAPI(transcribedText)
-            if not result then
-                toggleMouseIndicator("error")
+    -- First check if there's any selected text by comparing clipboard before and after
+    local originalClipboard = hs.pasteboard.getContents()
+    sendKeystroke({"cmd"}, "c")
+    hs.timer.doAfter(0.1, function()  -- Small delay to ensure copy completes
+        local newClipboard = hs.pasteboard.getContents()
+        local selectedText = nil
+        
+        -- If clipboard changed, we have selected text
+        if newClipboard and newClipboard ~= originalClipboard then
+            selectedText = newClipboard
+            -- Restore original clipboard
+            hs.pasteboard.setContents(originalClipboard)
+        end
+        
+        if recordingTask and recordingTask:isRunning() then
+            -- Stop recording and process transcription, then call assistant
+            stopAndTranscribe(function(transcribedText)
+                addToHistory("user", transcribedText)
+                local result, err = callAssistantAPI(transcribedText, selectedText)
+                if not result then
+                    toggleMouseIndicator("error")
+                    hs.timer.doAfter(1, function() toggleMouseIndicator() end)
+                    hs.alert.show("Error: " .. (err or "Unknown"), alertStyle)
+                    hs.sound.getByName("Basso"):play()
+                    return
+                end
+                hs.pasteboard.setContents(result)
+                hs.timer.usleep(500000)
+                hs.eventtap.keyStroke({"cmd"}, "v")
+                hs.sound.getByName("Blow"):play()
+                toggleMouseIndicator("done")
                 hs.timer.doAfter(1, function() toggleMouseIndicator() end)
-                hs.alert.show("Error: " .. (err or "Unknown"), alertStyle)
-                hs.sound.getByName("Basso"):play()
-                return
+            end)
+        else
+            -- If there's selected text but no recording yet
+            if selectedText then
+                hs.alert.show("Recording with context...", alertStyle)
             end
-            hs.pasteboard.setContents(result)
-            hs.timer.usleep(500000)
-            hs.eventtap.keyStroke({"cmd"}, "v")
-            hs.sound.getByName("Blow"):play()
-            toggleMouseIndicator("done")
+            startRecording()
+        end
+    end)
+end
+
+local function assistantInteractFromClipboard()
+    -- Save original clipboard content
+    local originalClipboard = hs.pasteboard.getContents()
+    toggleMouseIndicator("processing")
+    
+    -- Try to copy any selected text
+    sendKeystroke({"cmd"}, "c")
+    hs.timer.doAfter(0.1, function()  -- Small delay to ensure copy completes
+        local newClipboard = hs.pasteboard.getContents()
+        
+        -- If nothing was selected/copied
+        if not newClipboard or newClipboard == "" then
+            hs.alert.show("No text selected", alertStyle)
+            hs.sound.getByName("Basso"):play()
+            return
+        end
+
+        addToHistory("user", newClipboard)
+        
+        local result, err = callAssistantAPI(newClipboard)
+        if not result then
+            toggleMouseIndicator("error")
             hs.timer.doAfter(1, function() toggleMouseIndicator() end)
-        end)
-    else
-        -- Start recording
-        startRecording()
-    end
+            hs.alert.show("Error: " .. (err or "Unknown"), alertStyle)
+            hs.sound.getByName("Basso"):play()
+            return
+        end
+        
+        hs.pasteboard.setContents(result)
+        hs.timer.usleep(500000)
+        hs.eventtap.keyStroke({"cmd"}, "v")
+        hs.sound.getByName("Blow"):play()
+        toggleMouseIndicator("done")
+        hs.timer.doAfter(1, function() toggleMouseIndicator() end)
+    end)
 end
 
 -----------------------------------------
@@ -558,6 +624,12 @@ local commands = {
         settingKey = "assistantShortcut",
         default = {{"alt", "cmd"}, "O"},
         action = assistantInteract
+    },
+    {
+        name = "AI Assistant (Clipboard)",
+        settingKey = "assistantClipboardShortcut",
+        default = {{"alt", "cmd"}, "I"},
+        action = assistantInteractFromClipboard
     },
     {
         name = "Edit Assistant Prompt",
