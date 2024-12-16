@@ -147,7 +147,7 @@ local STATUS_EMOJIS = {
 
 local function updateIndicatorPosition()
     if mouseIndicator and emojiIndicator then
-        local mousePos = hs.mouse.getAbsolutePosition()
+        local mousePos = hs.mouse.absolutePosition()
         mouseIndicator:setTopLeft({x = mousePos.x + 20, y = mousePos.y - 20})
         emojiIndicator:setTopLeft({x = mousePos.x + 24, y = mousePos.y - 13})
     end
@@ -198,7 +198,7 @@ local function toggleMouseIndicator(newStatus)
         return
     end
 
-    local mousePos = hs.mouse.getAbsolutePosition()
+    local mousePos = hs.mouse.absolutePosition()
     mouseIndicator = hs.drawing.circle(hs.geometry.rect(mousePos.x + 20, mousePos.y - 20, 31, 30))
     mouseIndicator:setFill(true)
     mouseIndicator:setFillColor({red = 1, green = 0, blue = 0, alpha = 0.7})
@@ -263,7 +263,7 @@ local function callAssistantAPI(userInput, context)
     local finalUserInput = userInput
     if context then
         finalUserInput = string.format("%s\n\n<selected_text>This is the text I have selected: %s</selected_text>", 
-            context, userInput)
+            userInput, context)
     end
     
     table.insert(messages, { role = "user", content = finalUserInput })
@@ -274,7 +274,7 @@ local function callAssistantAPI(userInput, context)
         temperature = 0.7
     })
 
-    print(finalUserInput)
+    print(jsonBody)
     
     local curlCmd = string.format(
         '/usr/bin/curl "https://api.openai.com/v1/chat/completions" ' ..
@@ -285,9 +285,11 @@ local function callAssistantAPI(userInput, context)
     )
     local response = hs.execute(curlCmd)
     local json = hs.json.decode(response)
+    print(response)
     if not json or not json.choices or not json.choices[1] or not json.choices[1].message then
         return nil, "No valid response"
     end
+    addToHistory("user", finalUserInput)
     addToHistory("assistant", json.choices[1].message.content)
     return json.choices[1].message.content, nil
 end
@@ -460,7 +462,7 @@ local function assistantInteract()
         if recordingTask and recordingTask:isRunning() then
             -- Stop recording and process transcription, then call assistant
             stopAndTranscribe(function(transcribedText)
-                addToHistory("user", transcribedText)
+                -- addToHistory("user", transcribedText)
                 local result, err = callAssistantAPI(transcribedText, selectedText)
                 if not result then
                     toggleMouseIndicator("error")
@@ -478,9 +480,9 @@ local function assistantInteract()
             end)
         else
             -- If there's selected text but no recording yet
-            if selectedText then
-                hs.alert.show("Recording with context...", alertStyle)
-            end
+            -- if selectedText then
+            --     hs.alert.show("Recording with context...", alertStyle)
+            -- end
             startRecording()
         end
     end)
@@ -503,7 +505,7 @@ local function assistantInteractFromClipboard()
             return
         end
 
-        addToHistory("user", newClipboard)
+        -- addToHistory("user", newClipboard)
         
         local result, err = callAssistantAPI(newClipboard)
         if not result then
