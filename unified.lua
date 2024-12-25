@@ -229,23 +229,75 @@ local function sendKeystroke(modifiers, key)
     hs.eventtap.keyStroke(modifiers, key, 0)
 end
 
-local function callOpenAI(sysPrompt, userText)
+-- local function callOpenAI_1(sysPrompt, userText, justGrammarFix)
+--     local baseUrl = justGrammarFix and "https://api.groq.com" or "https://api.openai.com"
+--     local model = justGrammarFix and "llama-3.2-3b-preview" or "gpt-4o-mini"
+    
+--     -- Override system prompt if justGrammarFix is true
+--     if justGrammarFix then
+--         sysPrompt = "Please make minimal grammar and punctuation improvements to the following text. Remove filler words and phrases that don't contribute to the main message, as this is from speech-to-text where the speaker was thinking aloud. Maintain the original meaning and keep the changes subtle."
+--     end
+    
+--     local jsonBody = hs.json.encode({
+--         model = model,
+--         messages = {
+--             { role = "system", content = sysPrompt },
+--             { role = "user", content = userText }
+--         },
+--         temperature = 0
+--     })
+    
+--     local curlCmd = string.format(
+--         '/usr/bin/curl "%s/v1/chat/completions" ' ..
+--         '-H "Authorization: Bearer %s" ' ..
+--         '-H "Content-Type: application/json" ' ..
+--         '-d %q',
+--         baseUrl, justGrammarFix and groqKey or openAIKey, jsonBody
+--     )
+    
+--     local response = hs.execute(curlCmd)
+--     local json = hs.json.decode(response)
+--     if not json or not json.choices or not json.choices[1] or not json.choices[1].message then
+--         return nil, "No valid response"
+--     end
+--     return json.choices[1].message.content, nil
+-- end
+
+local function callOpenAI(sysPrompt, userText, speechFix)
+    -- local baseUrl = speechFix and "https://api.groq.com/openai" or "https://api.openai.com"
+    -- -- local model = speechFix and "llama-3.2-3b-preview" or "gpt-4o-mini"
+    -- local model = speechFix and "llama-3.3-70b-versatile" or "gpt-4o-mini"
+
+    -- print("Base URL: " .. baseUrl)
+    -- print("Using model: " .. model)
+    
+    local _sysPrompt = sysPrompt
+
+    if speechFix then
+        _sysPrompt = _sysPrompt .. "IMPORTANT: This is a transcribed voice. Remove filler words and phrases that don't contribute to the main message, as this is from speech-to-text where the speaker was thinking aloud. Maintain the original meaning and keep the changes subtle."
+        -- Print in console for debugging that we detected speech fix
+        -- print("Detected speech fix")
+    end
+
     local jsonBody = hs.json.encode({
         model = "gpt-4o-mini",
         messages = {
-            { role = "system", content = getSystemPrompt() },
+            { role = "system", content = _sysPrompt },
             { role = "user", content = userText }
         },
         temperature = 0
     })
     local curlCmd = string.format(
         '/usr/bin/curl "https://api.openai.com/v1/chat/completions" ' ..
+        -- '/usr/bin/curl "%s/v1/chat/completions" ' ..
         '-H "Authorization: Bearer %s" ' ..
         '-H "Content-Type: application/json" ' ..
         '-d %q',
         openaiKey, jsonBody
+        -- baseUrl, speechFix and groqKey or openaiKey, jsonBody
     )
     local response = hs.execute(curlCmd)
+    -- print("Response: " .. response)
     local json = hs.json.decode(response)
     if not json or not json.choices or not json.choices[1] or not json.choices[1].message then
         return nil, "No valid response"
@@ -335,6 +387,7 @@ local function startRecording()
 end
 
 local function callGroqTranscribe(filePath)
+    local promptText = "This is UncleCode's voice discussing technical topics and his businesses including Crawl4ai (a web scraping solution), KidoCode (a coding education platform for children), and Cubie (a software development company). Please apply proper punctuation, fix spelling, and improve grammar while maintaining the original meaning. Also most of time if you see the term Grok, most likely he is refering to Groq company working on LPU, an fast inference chip."    
     local curlCmd = string.format(
         '/usr/bin/curl "https://api.groq.com/openai/v1/audio/transcriptions" ' ..
         '-H "Authorization: Bearer %s" ' ..
@@ -343,8 +396,9 @@ local function callGroqTranscribe(filePath)
         '-F model=whisper-large-v3-turbo ' ..
         '-F temperature=0 ' ..
         '-F response_format=json ' ..
-        '-F language=en',
-        groqKey, filePath
+        '-F language=en ' ..
+        '-F prompt="%s"',
+        groqKey, filePath, promptText
     )
     local response = hs.execute(curlCmd)
     local json = hs.json.decode(response)
@@ -383,7 +437,7 @@ local function stopAndTranscribe(callback)
         else
             -- Default behavior: optional grammar fix, then paste
             if autoGrammarAfterTranscribe then
-                local result, gErr = callOpenAI(systemPrompt, text)
+                local result, gErr = callOpenAI(systemPrompt, text, true)
                 if result then
                     text = result
                 else
